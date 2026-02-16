@@ -1,0 +1,28 @@
+# Web framework
+fastapi==0.115.6
+uvicorn[standard]==0.32.1
+
+# Environment & Config
+python-dotenv==1.0.1
+
+# HTTP & Networking
+requests==2.32.3
+
+# Blockchain & Crypto
+eth-account==0.13.4
+
+# Data validation
+pydantic>=2.7,<3
+
+# Polymarket CLOB
+py-clob-client
+
+# Redis
+redis>=5.0.0
+
+# AI / LLM
+openai>=1.40.0
+anthropic>=0.40.0
+
+# Utilities
+python-dateutil>=2.8.2
