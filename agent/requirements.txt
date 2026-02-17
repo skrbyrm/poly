@@ -26,3 +26,6 @@ anthropic>=0.40.0
 
 # Utilities
 python-dateutil>=2.8.2
+
+# Testing
+pytest>=8.2.0
