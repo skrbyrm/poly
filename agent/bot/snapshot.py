@@ -1,79 +1,36 @@
 # agent/bot/snapshot.py
-"""
-Market snapshot - En iyi trading fırsatlarını bul (revize edilmiş, paralel)
-"""
-import time
 from typing import Dict, Any
 from .core.market_intelligence import get_market_intelligence
+from .gamma import candidate_markets, extract_clob_token_ids
 from .config import SNAPSHOT_TIME_BUDGET_S, TOPK
 
-# Watch mekanizması (backward compatibility)
 WATCH: Dict[str, Any] = {}
 WATCH_TTL_S = 300
 
-def snapshot_scored_scan_internal(time_budget_s: int = None) -> Dict[str, Any]:
-    """
-    Market tarama ve scoring (backward compatibility wrapper)
-    
-    Args:
-        time_budget_s: Maksimum süre (saniye)
-    
-    Returns:
-        Snapshot result
-    """
-    if time_budget_s is None:
-        time_budget_s = SNAPSHOT_TIME_BUDGET_S
-    
-    # Yeni market intelligence kullan
-    intel = get_market_intelligence()
-    result = intel.find_top_opportunities(topk=1)  # Tek opportunity
-    
-    if not result.get("ok") or not result.get("topk"):
-        return {
-            "ok": False,
-            "error": "No opportunities found",
-            "time_s": result.get("time_s", 0)
-        }
-    
-    # İlk opportunity'yi al (backward compatibility)
-    opp = result["topk"][0]
-    
-    return {
-        "ok": True,
-        "token_id": opp.get("token_id"),
-        "score": opp.get("score"),
-        "band_best_bid": opp.get("best_bid"),
-        "band_best_ask": opp.get("best_ask"),
-        "spread_band": opp.get("spread"),
-        "mid_band": opp.get("mid_price"),
-        "bid_depth_band": opp.get("bid_depth"),
-        "ask_depth_band": opp.get("ask_depth"),
-        "time_s": result.get("time_s", 0),
-        "tried": result.get("scanned", 0)
-    }
+
+def _build_token_to_question_map(limit: int = 500) -> Dict[str, str]:
+    mapping = {}
+    try:
+        markets = candidate_markets(limit=limit)
+        for m in markets:
+            question = m.get("question", "")
+            tokens = extract_clob_token_ids(m)
+            for tid in tokens:
+                mapping[tid] = question
+    except Exception as e:
+        print(f"[SNAPSHOT] Question map error: {e}")
+    return mapping
 
 
 def snapshot_scored_scan_topk_internal(time_budget_s: int = None, topk: int = None) -> Dict[str, Any]:
-    """
-    Market tarama - Top K opportunities
-    
-    Args:
-        time_budget_s: Maksimum süre (saniye)
-        topk: Kaç tane opportunity
-    
-    Returns:
-        Top K snapshot result
-    """
     if time_budget_s is None:
         time_budget_s = SNAPSHOT_TIME_BUDGET_S
-    
     if topk is None:
         topk = TOPK
-    
-    # Market intelligence kullan
+
     intel = get_market_intelligence()
     result = intel.find_top_opportunities(topk=topk)
-    
+
     if not result.get("ok"):
         return {
             "ok": False,
@@ -82,14 +39,16 @@ def snapshot_scored_scan_topk_internal(time_budget_s: int = None, topk: int = No
             "count": 0,
             "time_s": result.get("time_s", 0)
         }
-    
+
+    token_questions = _build_token_to_question_map()
     opportunities = result.get("topk", [])
-    
-    # Format conversion (score data -> snapshot format)
+
     formatted_topk = []
     for opp in opportunities:
+        tid = opp.get("token_id")
         formatted_topk.append({
-            "token_id": opp.get("token_id"),
+            "token_id": tid,
+            "question": token_questions.get(tid, "Unknown market"),
             "score": opp.get("score"),
             "band_best_bid": opp.get("best_bid"),
             "band_best_ask": opp.get("best_ask"),
@@ -98,12 +57,33 @@ def snapshot_scored_scan_topk_internal(time_budget_s: int = None, topk: int = No
             "mid_band": opp.get("mid_price"),
             "bid_depth_band": opp.get("bid_depth"),
             "ask_depth_band": opp.get("ask_depth"),
+            "imbalance": opp.get("imbalance"),
         })
-    
+
     return {
         "ok": True,
         "topk": formatted_topk,
         "count": len(formatted_topk),
         "time_s": result.get("time_s", 0),
         "scanned": result.get("scanned", 0)
+    }
+
+
+def snapshot_scored_scan_internal(time_budget_s: int = None) -> Dict[str, Any]:
+    result = snapshot_scored_scan_topk_internal(time_budget_s=time_budget_s, topk=1)
+    if not result.get("ok") or not result.get("topk"):
+        return {"ok": False, "error": "No opportunities", "time_s": result.get("time_s", 0)}
+    opp = result["topk"][0]
+    return {
+        "ok": True,
+        "token_id": opp.get("token_id"),
+        "question": opp.get("question"),
+        "score": opp.get("score"),
+        "band_best_bid": opp.get("band_best_bid"),
+        "band_best_ask": opp.get("band_best_ask"),
+        "spread_band": opp.get("spread_band"),
+        "mid_band": opp.get("mid_band"),
+        "bid_depth_band": opp.get("bid_depth_band"),
+        "ask_depth_band": opp.get("ask_depth_band"),
+        "time_s": result.get("time_s", 0),
     }

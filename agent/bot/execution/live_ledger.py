@@ -125,6 +125,21 @@ class LiveLedger:
         """Token için pozisyon bilgisi getir"""
         return self.positions.get(token_id)
     
+
+    def get_portfolio_value(self) -> float:
+        """Portföy değerini hesapla"""
+        total = 0.0
+        for pos in self.positions.values():
+            qty = float(pos.get("qty", 0))
+            price = float(pos.get("avg_price", 0))
+            total += qty * price
+        return total
+
+    def get_position(self, token_id: str):
+        """Tek pozisyon getir"""
+        return self.positions.get(str(token_id))
+
+    
     def snapshot(self) -> Dict[str, Any]:
         """Ledger snapshot'ı getir"""
         return {
