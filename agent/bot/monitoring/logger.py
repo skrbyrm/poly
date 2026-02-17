@@ -6,7 +6,7 @@ import os
 import sys
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 class StructuredLogger:
@@ -25,7 +25,7 @@ class StructuredLogger:
     def _log(self, level: str, message: str, **kwargs):
         """Log mesajını JSON formatında yaz"""
         log_data = {
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
             "level": level,
             "message": message,
             **kwargs
@@ -81,7 +81,7 @@ class JsonFormatter(logging.Formatter):
         except (json.JSONDecodeError, ValueError):
             # Düz mesaj ise JSON'a çevir
             log_data = {
-                "timestamp": datetime.utcnow().isoformat() + "Z",
+                "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
                 "level": record.levelname,
                 "message": record.getMessage(),
                 "logger": record.name,
