@@ -13,12 +13,12 @@ class MarketIntelligence:
 
     def __init__(self):
         self.max_workers = 10
-        self.min_depth = MIN_BAND_DEPTH
-        self.min_bid = 0.10
-        self.max_ask = 0.90
-        self.max_spread = 0.15
-        self.min_mid = 0.20
-        self.max_mid = 0.80
+        self.min_depth = 10
+        self.min_bid = 0.05
+        self.max_ask = 0.95
+        self.max_spread = 0.25
+        self.min_mid = 0.10
+        self.max_mid = 0.90
 
     def get_candidate_tokens(self, limit: int = None) -> List[str]:
         if limit is None:
