@@ -31,6 +31,11 @@ services:
       context: ./agent
     env_file:
       - ./.env
+    environment:
+      # PostgreSQL bağlantısı — POSTGRES_* env'den otomatik inşa edilir
+      # Ama açıkça da verebilirsiniz:
+      DATABASE_URL: "postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}"
+      POSTGRES_HOST: "postgres"
     depends_on:
       postgres:
         condition: service_healthy

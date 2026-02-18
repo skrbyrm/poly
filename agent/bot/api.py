@@ -21,7 +21,13 @@ from .monitoring.dashboard import get_dashboard_data, format_dashboard_text
 from .core.risk_engine import get_risk_engine
 from .utils import patch_pyclob_hmac
 
+# Backtest router
+from .api.backtest_routes import router as backtest_router
+
 app = FastAPI(title="Polymarket AI Agent - Full Stack")
+
+# Backtest route'larını dahil et
+app.include_router(backtest_router)
 
 # Tick overlap guard
 _TICK_LOCK = threading.Lock()
@@ -53,17 +59,15 @@ def _refresh_state_from_env() -> None:
 @app.on_event("startup")
 def _startup() -> None:
     """Startup tasks"""
-    # HMAC patch uygula
     patch_pyclob_hmac()
-    
     _refresh_state_from_env()
     _set_address_once()
-    
+
     try:
         load_ledger_from_redis(LEDGER)
     except Exception:
         pass
-    
+
     print("[API] Startup complete - Full stack AI trader ready")
 
 
@@ -133,7 +137,6 @@ def snapshot_scored() -> Dict[str, Any]:
     """Market snapshot - top opportunities"""
     budget = int(os.getenv("SNAPSHOT_TIME_BUDGET_S", "60"))
     topk = int(os.getenv("SNAP_TOPK", "4"))
-    
     return snapshot_scored_scan_topk_internal(time_budget_s=budget, topk=topk)
 
 

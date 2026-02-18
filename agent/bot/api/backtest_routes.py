@@ -5,10 +5,11 @@ Backtest API Routes
 POST /backtest/run        — Backtest başlat
 GET  /backtest/latest     — Son backtest raporu
 POST /backtest/optimize   — Grid search ile parametre optimizasyonu
+GET  /backtest/db/runs    — DB'deki tüm run özetleri
 """
 import asyncio
 from typing import Optional, List
-from fastapi import APIRouter, BackgroundTasks, HTTPException
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from ..backtest.replay_engine import BacktestConfig, ReplayEngine
@@ -19,6 +20,7 @@ from ..backtest.analytics import (
     equity_curve,
     save_result_to_db,
     grid_search,
+    _get_database_url,
 )
 from ..monitoring.logger import get_logger
 
@@ -30,7 +32,7 @@ _last_result = None
 
 
 # ─────────────────────────────────────────────
-# Request / Response modelleri
+# Request modelleri
 # ─────────────────────────────────────────────
 
 class BacktestRequest(BaseModel):
@@ -60,7 +62,6 @@ class OptimizeRequest(BaseModel):
 async def run_backtest(req: BacktestRequest):
     """
     Backtest çalıştır ve sonuçları döndür.
-    
     Uyarı: max_markets büyükse birkaç dakika sürebilir.
     """
     global _last_result
@@ -77,7 +78,8 @@ async def run_backtest(req: BacktestRequest):
 
     try:
         engine = ReplayEngine(config)
-        result = await asyncio.get_event_loop().run_in_executor(
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(
             None, lambda: engine.run(
                 days_back=req.days_back,
                 max_markets=req.max_markets,
@@ -86,21 +88,26 @@ async def run_backtest(req: BacktestRequest):
 
         _last_result = result
 
+        db_saved = False
         if req.save_to_db:
-            save_result_to_db(result, run_name=req.run_name or f"api_{req.days_back}d")
+            db_saved = save_result_to_db(
+                result,
+                run_name=req.run_name or f"api_{req.days_back}d"
+            )
 
         return {
-            "ok":            True,
-            "markets_tested":result.markets_tested,
-            "total_trades":  result.total_trades,
-            "win_rate":      result.win_rate,
-            "total_pnl":     result.total_pnl,
-            "sharpe_ratio":  result.sharpe_ratio,
-            "max_drawdown":  result.max_drawdown,
-            "avg_hold_hours":result.avg_hold_hours,
-            "by_category":   breakdown_by_category(result),
-            "by_exit_reason":breakdown_by_exit_reason(result),
-            "equity_curve":  equity_curve(result)[-20:],  # Son 20 nokta
+            "ok":              True,
+            "markets_tested":  result.markets_tested,
+            "total_trades":    result.total_trades,
+            "win_rate":        result.win_rate,
+            "total_pnl":       result.total_pnl,
+            "sharpe_ratio":    result.sharpe_ratio,
+            "max_drawdown":    result.max_drawdown,
+            "avg_hold_hours":  result.avg_hold_hours,
+            "db_saved":        db_saved,
+            "by_category":     breakdown_by_category(result),
+            "by_exit_reason":  breakdown_by_exit_reason(result),
+            "equity_curve":    equity_curve(result)[-20:],
         }
 
     except Exception as e:
@@ -112,17 +119,20 @@ async def run_backtest(req: BacktestRequest):
 async def get_latest_report():
     """Son backtest'in text raporunu döndür."""
     if _last_result is None:
-        raise HTTPException(status_code=404, detail="No backtest run yet. Call POST /backtest/run first.")
+        raise HTTPException(
+            status_code=404,
+            detail="No backtest run yet. Call POST /backtest/run first."
+        )
 
     report_text = generate_report(_last_result)
     return {
         "ok":     True,
         "report": report_text,
         "summary": {
-            "trades":     _last_result.total_trades,
-            "win_rate":   _last_result.win_rate,
-            "total_pnl":  _last_result.total_pnl,
-            "sharpe":     _last_result.sharpe_ratio,
+            "trades":    _last_result.total_trades,
+            "win_rate":  _last_result.win_rate,
+            "total_pnl": _last_result.total_pnl,
+            "sharpe":    _last_result.sharpe_ratio,
         },
     }
 
@@ -131,12 +141,12 @@ async def get_latest_report():
 async def optimize_parameters(req: OptimizeRequest):
     """
     Grid search ile TP/SL/imbalance optimizasyonu.
-    
-    Uyarı: 27 kombinasyon × max_markets market = yavaş olabilir.
+    27 kombinasyon × max_markets market.
     Küçük değerlerle başla: days_back=7, max_markets=10
     """
     try:
-        results = await asyncio.get_event_loop().run_in_executor(
+        loop = asyncio.get_event_loop()
+        results = await loop.run_in_executor(
             None, lambda: grid_search(
                 days_back=req.days_back,
                 max_markets=req.max_markets,
@@ -146,15 +156,56 @@ async def optimize_parameters(req: OptimizeRequest):
         top5 = results[:5]
 
         return {
-            "ok":      True,
-            "best":    top5[0] if top5 else None,
-            "top_5":   top5,
-            "total_combinations": len(results),
-            "recommendation": _make_recommendation(top5[0]) if top5 else "No results",
+            "ok":                  True,
+            "best":                top5[0] if top5 else None,
+            "top_5":               top5,
+            "total_combinations":  len(results),
+            "recommendation":      _make_recommendation(top5[0]) if top5 else "No results",
         }
 
     except Exception as e:
         logger.error("Optimize failed", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/db/runs")
+async def list_db_runs(limit: int = 20):
+    """
+    PostgreSQL'deki backtest run özetlerini listele.
+    """
+    db_url = _get_database_url()
+    if not db_url:
+        raise HTTPException(status_code=503, detail="Database not configured")
+
+    try:
+        import psycopg2
+        import psycopg2.extras
+
+        conn = psycopg2.connect(db_url)
+        cur  = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+        cur.execute("""
+            SELECT id, run_name, run_at, markets, total_trades,
+                   win_rate, total_pnl, sharpe, max_drawdown, avg_hold_h
+            FROM backtest_runs
+            ORDER BY run_at DESC
+            LIMIT %s
+        """, (limit,))
+
+        rows = cur.fetchall()
+        cur.close()
+        conn.close()
+
+        return {
+            "ok":   True,
+            "runs": [dict(r) for r in rows],
+            "count": len(rows),
+        }
+
+    except psycopg2.errors.UndefinedTable:
+        return {"ok": True, "runs": [], "count": 0, "note": "No backtest runs yet"}
+    except Exception as e:
+        logger.error("DB list runs failed", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
 
 

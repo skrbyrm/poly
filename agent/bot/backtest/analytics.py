@@ -2,22 +2,48 @@
 """
 Backtest Analytics — Sonuçları analiz et, kaydet, raporla.
 
-Yapılacaklar:
-  1. BacktestResult → PostgreSQL'e kaydet
-  2. Kategori / exit_reason bazlı breakdown
-  3. Parametre optimizasyonu (grid search)
-  4. İnsan okunabilir rapor üret
+Düzeltmeler:
+  - DATABASE_URL artık POSTGRES_* env var'larından otomatik construct ediliyor
+  - grid_search içinde çift compute_metrics() kaldırıldı
 """
 import json
 import statistics
 from dataclasses import asdict
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional
 from datetime import datetime, timezone
 
 from .replay_engine import BacktestResult, BacktestTrade, BacktestConfig
 from ..monitoring.logger import get_logger
 
 logger = get_logger("backtest.analytics")
+
+
+# ─────────────────────────────────────────────
+# DB URL helper
+# ─────────────────────────────────────────────
+
+def _get_database_url() -> Optional[str]:
+    """
+    DATABASE_URL'yi önce env'den, yoksa POSTGRES_* parçalarından üret.
+
+    compose.yaml'da agent servisine DATABASE_URL set edilmişse onu kullan.
+    Yoksa POSTGRES_USER / POSTGRES_PASSWORD / POSTGRES_DB / POSTGRES_HOST'tan
+    postgresql://user:password@host:5432/db şeklinde inşa et.
+    """
+    import os
+
+    url = os.getenv("DATABASE_URL", "").strip()
+    if url:
+        return url
+
+    user     = os.getenv("POSTGRES_USER", "polymarket")
+    password = os.getenv("POSTGRES_PASSWORD", "polymarket")
+    db       = os.getenv("POSTGRES_DB", "polymarket")
+    # Docker Compose içinde servis adı "postgres" host olarak kullanılır
+    host     = os.getenv("POSTGRES_HOST", "postgres")
+    port     = os.getenv("POSTGRES_PORT", "5432")
+
+    return f"postgresql://{user}:{password}@{host}:{port}/{db}"
 
 
 # ─────────────────────────────────────────────
@@ -35,12 +61,12 @@ def breakdown_by_category(result: BacktestResult) -> Dict[str, Dict[str, Any]]:
         pnls = [t.pnl for t in trades]
         wins = sum(1 for p in pnls if p > 0)
         out[cat] = {
-            "trades":     len(trades),
-            "win_rate":   round(wins / len(trades) * 100, 1),
-            "total_pnl":  round(sum(pnls), 4),
-            "avg_pnl":    round(statistics.mean(pnls), 4) if pnls else 0,
-            "best_trade": round(max(pnls), 4) if pnls else 0,
-            "worst_trade":round(min(pnls), 4) if pnls else 0,
+            "trades":      len(trades),
+            "win_rate":    round(wins / len(trades) * 100, 1),
+            "total_pnl":   round(sum(pnls), 4),
+            "avg_pnl":     round(statistics.mean(pnls), 4) if pnls else 0,
+            "best_trade":  round(max(pnls), 4) if pnls else 0,
+            "worst_trade": round(min(pnls), 4) if pnls else 0,
         }
     return out
 
@@ -55,10 +81,10 @@ def breakdown_by_exit_reason(result: BacktestResult) -> Dict[str, Dict[str, Any]
     for reason, trades in groups.items():
         pnls = [t.pnl for t in trades]
         out[reason] = {
-            "count":     len(trades),
-            "total_pnl": round(sum(pnls), 4),
-            "avg_pnl":   round(statistics.mean(pnls), 4) if pnls else 0,
-            "pct_of_trades": round(len(trades) / len(result.trades) * 100, 1)
+            "count":          len(trades),
+            "total_pnl":      round(sum(pnls), 4),
+            "avg_pnl":        round(statistics.mean(pnls), 4) if pnls else 0,
+            "pct_of_trades":  round(len(trades) / len(result.trades) * 100, 1)
                               if result.trades else 0,
         }
     return out
@@ -70,7 +96,7 @@ def equity_curve(result: BacktestResult) -> List[Dict[str, Any]]:
         return []
 
     equity = result.config.initial_cash
-    curve = []
+    curve  = []
 
     for trade in sorted(result.trades, key=lambda t: t.entry_ts):
         equity += trade.pnl
@@ -94,19 +120,17 @@ def grid_search(
 ) -> List[Dict[str, Any]]:
     """
     TP/SL/imbalance parametrelerini grid search ile optimize et.
-    
-    Test edilecek kombinasyonlar:
-      take_profit: [0.02, 0.03, 0.05]
-      stop_loss:   [0.01, 0.02, 0.03]
+
+    Test kombinasyonları (3×3×3 = 27):
+      take_profit:   [0.02, 0.03, 0.05]
+      stop_loss:     [0.01, 0.02, 0.03]
       min_imbalance: [0.20, 0.30, 0.40]
-    
-    En iyi kombinasyonu Sharpe Ratio'ya göre sıralar.
     """
     from .replay_engine import ReplayEngine
 
-    tp_values   = [0.02, 0.03, 0.05]
-    sl_values   = [0.01, 0.02, 0.03]
-    imb_values  = [0.20, 0.30, 0.40]
+    tp_values  = [0.02, 0.03, 0.05]
+    sl_values  = [0.01, 0.02, 0.03]
+    imb_values = [0.20, 0.30, 0.40]
 
     results = []
 
@@ -119,18 +143,18 @@ def grid_search(
                     min_imbalance=imb,
                 )
                 engine = ReplayEngine(config)
+                # run() içinde compute_metrics() zaten çağrılıyor
                 result = engine.run(days_back=days_back, max_markets=max_markets)
-                result.compute_metrics()
 
                 results.append({
-                    "take_profit":    tp,
-                    "stop_loss":      sl,
-                    "min_imbalance":  imb,
-                    "trades":         result.total_trades,
-                    "win_rate":       result.win_rate,
-                    "total_pnl":      result.total_pnl,
-                    "sharpe":         result.sharpe_ratio,
-                    "max_drawdown":   result.max_drawdown,
+                    "take_profit":   tp,
+                    "stop_loss":     sl,
+                    "min_imbalance": imb,
+                    "trades":        result.total_trades,
+                    "win_rate":      result.win_rate,
+                    "total_pnl":     result.total_pnl,
+                    "sharpe":        result.sharpe_ratio,
+                    "max_drawdown":  result.max_drawdown,
                 })
 
                 logger.info(
@@ -201,13 +225,12 @@ def generate_report(result: BacktestResult) -> str:
             )
         lines.append("")
 
-    # En iyi / en kötü trade'ler
     if result.trades:
         sorted_by_pnl = sorted(result.trades, key=lambda t: t.pnl, reverse=True)
         lines.append("── TOP 3 TRADES ─────────────────────────────")
         for t in sorted_by_pnl[:3]:
             lines.append(
-                f"  +{t.pnl:.4f}  {t.question[:40]}  [{t.exit_reason}]"
+                f"  {t.pnl:+.4f}  {t.question[:40]}  [{t.exit_reason}]"
             )
         lines.append("")
         lines.append("── WORST 3 TRADES ───────────────────────────")
@@ -218,7 +241,6 @@ def generate_report(result: BacktestResult) -> str:
 
     lines.append("")
     lines.append("=" * 60)
-
     return "\n".join(lines)
 
 
@@ -229,15 +251,21 @@ def generate_report(result: BacktestResult) -> str:
 def save_result_to_db(result: BacktestResult, run_name: str = "") -> bool:
     """
     Backtest sonuçlarını PostgreSQL'e kaydet.
-    
-    Tablo: backtest_runs (özet)
+
+    Tablo: backtest_runs   (özet)
     Tablo: backtest_trades (detay)
+
+    DATABASE_URL yoksa POSTGRES_* env var'larından inşa edilir.
     """
+    db_url = _get_database_url()
+    if not db_url:
+        logger.warning("No database URL available, skipping DB save")
+        return False
+
     try:
         import psycopg2
-        import os
 
-        conn = psycopg2.connect(os.environ["DATABASE_URL"])
+        conn = psycopg2.connect(db_url)
         cur  = conn.cursor()
 
         # Tablo oluştur (yoksa)
@@ -279,7 +307,8 @@ def save_result_to_db(result: BacktestResult, run_name: str = "") -> bool:
         # Run kaydı
         cur.execute("""
             INSERT INTO backtest_runs
-            (run_name, config, markets, total_trades, win_rate, total_pnl, sharpe, max_drawdown, avg_hold_h)
+            (run_name, config, markets, total_trades, win_rate, total_pnl,
+             sharpe, max_drawdown, avg_hold_h)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id
         """, (
@@ -317,6 +346,9 @@ def save_result_to_db(result: BacktestResult, run_name: str = "") -> bool:
         logger.info("Backtest saved to DB", run_id=run_id, trades=len(result.trades))
         return True
 
+    except ImportError:
+        logger.warning("psycopg2 not installed, skipping DB save")
+        return False
     except Exception as e:
         logger.error("DB save failed", error=str(e))
         return False
