@@ -22,7 +22,7 @@ from .core.risk_engine import get_risk_engine
 from .utils import patch_pyclob_hmac
 
 # Backtest router
-from .api.backtest_routes import router as backtest_router
+from .routers.backtest_routes import router as backtest_router
 
 app = FastAPI(title="Polymarket AI Agent - Full Stack")
 

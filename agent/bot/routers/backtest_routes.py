@@ -1,4 +1,4 @@
-# agent/bot/api/backtest_routes.py
+# agent/bot/routers/backtest_routes.py
 """
 Backtest API Routes
 
@@ -96,18 +96,18 @@ async def run_backtest(req: BacktestRequest):
             )
 
         return {
-            "ok":              True,
-            "markets_tested":  result.markets_tested,
-            "total_trades":    result.total_trades,
-            "win_rate":        result.win_rate,
-            "total_pnl":       result.total_pnl,
-            "sharpe_ratio":    result.sharpe_ratio,
-            "max_drawdown":    result.max_drawdown,
-            "avg_hold_hours":  result.avg_hold_hours,
-            "db_saved":        db_saved,
-            "by_category":     breakdown_by_category(result),
-            "by_exit_reason":  breakdown_by_exit_reason(result),
-            "equity_curve":    equity_curve(result)[-20:],
+            "ok":             True,
+            "markets_tested": result.markets_tested,
+            "total_trades":   result.total_trades,
+            "win_rate":       result.win_rate,
+            "total_pnl":      result.total_pnl,
+            "sharpe_ratio":   result.sharpe_ratio,
+            "max_drawdown":   result.max_drawdown,
+            "avg_hold_hours": result.avg_hold_hours,
+            "db_saved":       db_saved,
+            "by_category":    breakdown_by_category(result),
+            "by_exit_reason": breakdown_by_exit_reason(result),
+            "equity_curve":   equity_curve(result)[-20:],
         }
 
     except Exception as e:
@@ -142,7 +142,6 @@ async def optimize_parameters(req: OptimizeRequest):
     """
     Grid search ile TP/SL/imbalance optimizasyonu.
     27 kombinasyon × max_markets market.
-    Küçük değerlerle başla: days_back=7, max_markets=10
     """
     try:
         loop = asyncio.get_event_loop()
@@ -156,11 +155,11 @@ async def optimize_parameters(req: OptimizeRequest):
         top5 = results[:5]
 
         return {
-            "ok":                  True,
-            "best":                top5[0] if top5 else None,
-            "top_5":               top5,
-            "total_combinations":  len(results),
-            "recommendation":      _make_recommendation(top5[0]) if top5 else "No results",
+            "ok":                 True,
+            "best":               top5[0] if top5 else None,
+            "top_5":              top5,
+            "total_combinations": len(results),
+            "recommendation":     _make_recommendation(top5[0]) if top5 else "No results",
         }
 
     except Exception as e:
@@ -170,9 +169,7 @@ async def optimize_parameters(req: OptimizeRequest):
 
 @router.get("/db/runs")
 async def list_db_runs(limit: int = 20):
-    """
-    PostgreSQL'deki backtest run özetlerini listele.
-    """
+    """PostgreSQL'deki backtest run özetlerini listele."""
     db_url = _get_database_url()
     if not db_url:
         raise HTTPException(status_code=503, detail="Database not configured")
@@ -197,14 +194,15 @@ async def list_db_runs(limit: int = 20):
         conn.close()
 
         return {
-            "ok":   True,
-            "runs": [dict(r) for r in rows],
+            "ok":    True,
+            "runs":  [dict(r) for r in rows],
             "count": len(rows),
         }
 
-    except psycopg2.errors.UndefinedTable:
-        return {"ok": True, "runs": [], "count": 0, "note": "No backtest runs yet"}
     except Exception as e:
+        # Tablo henüz yoksa boş döndür
+        if "does not exist" in str(e):
+            return {"ok": True, "runs": [], "count": 0, "note": "No backtest runs yet"}
         logger.error("DB list runs failed", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
 
