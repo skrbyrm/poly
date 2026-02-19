@@ -105,7 +105,9 @@ class DecisionEngine:
         mid_price  = float(self._opp_get(best, "mid_price", "mid_band", default=0))
         bid_depth  = float(self._opp_get(best, "bid_depth", "bid_depth_band", default=0))
         ask_depth  = float(self._opp_get(best, "ask_depth", "ask_depth_band", default=0))
-        total_depth = bid_depth + ask_depth
+
+        # total_depth field varsa onu kullan, yoksa bid+ask
+        total_depth = float(self._opp_get(best, "total_depth", "total_depth_band", default=bid_depth + ask_depth))
 
         if spread_pct > 2.0:
             return {"decision": "hold", "reason": "Spread too wide", "confidence": 0.5}

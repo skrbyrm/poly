@@ -71,7 +71,9 @@ def _do_tick(session: requests.Session) -> bool:
 
         if result.get("ok"):
             action = result.get("action", "unknown")
-            log(f"[RUNNER] ✓ action={action} | {result.get('time_ms', elapsed_ms)}ms")
+            reason = result.get("reason") or result.get("detail") or result.get("error") or ""
+            conf = result.get("confidence")
+            log(f"[RUNNER] ✓ action={action} | conf={conf} | {result.get('time_ms', elapsed_ms)}ms | {reason}")
 
             if action in ("buy", "sell") and result.get("trade_result"):
                 t = result["trade_result"]

@@ -289,6 +289,15 @@ class ReplayEngine:
                 continue
 
             # ── Entry signal kontrolü ──
+            if cfg.min_imbalance <= 0.0:
+                if position is None and i == 0:
+                    entry_price = current_price
+                    qty = cfg.order_usd / entry_price if entry_price > 0 else 0
+                    if qty > 0:
+                        position = {"entry_price": entry_price, "entry_ts": point.timestamp, "qty": qty}
+                        hold_steps = 0
+                continue
+
             if i < 3:
                 continue   # Yeterli geçmiş yok
 

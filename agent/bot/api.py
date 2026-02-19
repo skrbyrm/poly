@@ -223,21 +223,51 @@ def agent_tick() -> Dict[str, Any]:
     Ana agent tick.
 
     Sprint 4: başarı/hata STATE'e kaydedilir → /health'te görünür.
+
+    Revizyon:
+      - Response'a "debug" alanı eklenir (secret içermez)
+      - tick_in_progress durumunda da debug alanı döner
     """
     global _LAST_TICK_TS, _LAST_TICK_MS
     _refresh_state_from_env()
 
+    # Debug (safe — no secrets)
+    debug = {
+        "mode": getattr(STATE, "mode", None),
+        "tick_every_s": os.getenv("TICK_EVERY_S"),
+        "topk": os.getenv("TOPK"),
+        "manage_max_pos": os.getenv("MANAGE_MAX_POS"),
+        "llm_provider": os.getenv("LLM_PROVIDER"),
+        "llm_model": os.getenv("LLM_MODEL"),
+        # Bu isimler projede değişmiş olabilir; boş gelmesi normal
+        "min_confidence": os.getenv("MIN_CONFIDENCE") or os.getenv("DECISION_MIN_CONFIDENCE") or os.getenv("AI_MIN_CONFIDENCE"),
+        "execution_mode": os.getenv("EXECUTION_MODE") or os.getenv("MODE"),
+        "paper_trading": os.getenv("PAPER_TRADING"),
+        "dry_run": os.getenv("DRY_RUN"),
+    }
+
     if not _TICK_LOCK.acquire(blocking=False):
         return {
-            "ok":    False,
+            "ok": False,
             "error": "tick_in_progress",
             "detail": "previous tick still running",
             "last_tick": {"ts": _LAST_TICK_TS, "ms": _LAST_TICK_MS},
+            "debug": debug,
         }
 
     t0 = time.time()
     try:
         result = agent_tick_internal()
+
+        # debug alanını response'a ekle/merge et
+        if isinstance(result, dict):
+            result.setdefault("debug", {})
+            if isinstance(result["debug"], dict):
+                result["debug"].update(debug)
+            else:
+                result["debug"] = debug
+        else:
+            result = {"ok": False, "error": "Invalid tick result type", "debug": debug}
 
         if result.get("ok"):
             STATE.record_tick_success()
@@ -249,10 +279,10 @@ def agent_tick() -> Dict[str, Any]:
     except Exception as e:
         err = f"{type(e).__name__}: {e}"
         STATE.record_tick_error(err)
-        return {"ok": False, "error": err}
+        return {"ok": False, "error": err, "debug": debug}
 
     finally:
-        elapsed_ms    = (time.time() - t0) * 1000
+        elapsed_ms = (time.time() - t0) * 1000
         _LAST_TICK_TS = time.time()
         _LAST_TICK_MS = elapsed_ms
         _TICK_LOCK.release()
