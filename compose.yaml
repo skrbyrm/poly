@@ -62,6 +62,6 @@ services:
         condition: service_healthy
     environment:
       CONTROL_URL: "http://agent:8080"
-      TICK_EVERY_S: "60"
+      TICK_EVERY_S: "10"
       TICK_HTTP_TIMEOUT_S: "180"
     command: ["python","-m","bot.runner"]

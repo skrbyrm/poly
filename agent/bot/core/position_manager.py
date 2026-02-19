@@ -26,6 +26,8 @@ class PositionManager:
         self.sl_pct = SL_PCT
         self.max_hold_seconds = MAX_HOLD_S
         self.exit_on_timeout = bool(EXIT_ON_TIMEOUT)
+        self._cooldown_tokens: Dict[str, float] = {}  # token_id → closed_at
+        self.cooldown_seconds: int = 300  # 30 dakika
 
     # ─────────────────────────────────────────────
     # Ana kontrol döngüsü
@@ -232,7 +234,19 @@ class PositionManager:
             "positions": positions,
         }
 
+    def mark_closed(self, token_id: str) -> None:
+        self._cooldown_tokens[token_id] = time.time()
 
+    def is_on_cooldown(self, token_id: str) -> bool:
+        closed_at = self._cooldown_tokens.get(token_id)
+        if not closed_at:
+            return False
+        if time.time() - closed_at < self.cooldown_seconds:
+            return True
+        del self._cooldown_tokens[token_id]
+        return False
+    
+    
 # ─────────────────────────────────────────────
 # Singleton
 # ─────────────────────────────────────────────

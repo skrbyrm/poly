@@ -194,6 +194,16 @@ def agent_tick_internal() -> Dict[str, Any]:
         action = decision.get("decision", "hold")
         confidence = float(decision.get("confidence", 0.5) or 0.5)
         token_id = decision.get("token_id")
+        # Cooldown kontrolü
+        if token_id and get_position_manager().is_on_cooldown(token_id):
+            reasons.append({"gate": "cooldown", "blocked": True, "token_id": token_id})
+            return {
+                "ok": True, "action": "hold", "reason": "token on 30min cooldown",
+                "confidence": confidence, "time_ms": _elapsed(start_time),
+                "position_exits": position_exits, "fill_results": fill_results,
+                "reasons": reasons, "scan_summary": scan_summary,
+                "best_opportunity": best_opportunity,
+            }
 
         min_conf = _infer_min_confidence()
 
@@ -323,15 +333,12 @@ def _fetch_current_prices(positions: Dict[str, Any]) -> Dict[str, float]:
             pass
     return prices
 
-
 def _check_position_exits(ledger) -> list:
     """Pozisyon exit sinyalleri üret ve execute et."""
     position_manager = get_position_manager()
     mode = STATE.mode
 
-    # Güncel fiyatları çek
     current_prices = _fetch_current_prices(ledger.positions)
-
     exit_signals = position_manager.check_exit_conditions(
         ledger.positions, current_prices
     )
@@ -342,16 +349,38 @@ def _check_position_exits(ledger) -> list:
         qty = signal["qty"]
         current_price = signal.get("current_price")
         reason = signal.get("reason")
+        pnl_pct = signal.get("pnl_pct", 0)
 
         if mode == "paper":
             result = paper_place_order(token_id, "sell", current_price, qty, immediate=True)
         else:
             result = live_place_order(token_id, "sell", current_price, qty)
 
+        position_manager.mark_closed(token_id)
+
+        # Win/loss kaydet
+        try:
+            from .monitoring.metrics import get_metrics_tracker
+            avg_price = signal.get("avg_price", current_price)
+            pnl = (current_price - avg_price) * qty if avg_price else 0
+            get_metrics_tracker().record_trade({
+                "token_id": token_id,
+                "side": "sell",
+                "reason": reason,
+                "pnl": pnl,
+                "pnl_pct": pnl_pct,
+                "qty": qty,
+                "price": current_price,
+                "won": pnl > 0,
+            })
+            STATE.record_trade_result(pnl)
+        except Exception as e:
+            logger.warning("Trade record failed", error=str(e))
+
         results.append({
             "token_id": token_id,
             "reason": reason,
-            "pnl_pct": signal.get("pnl_pct"),
+            "pnl_pct": pnl_pct,
             "result": result,
         })
 
@@ -359,11 +388,10 @@ def _check_position_exits(ledger) -> list:
             "Position exit",
             token_id=token_id,
             reason=reason,
-            pnl_pct=signal.get("pnl_pct"),
+            pnl_pct=pnl_pct,
         )
 
     return results
-
 
 def _execute_trade(
     decision: Dict[str, Any],
@@ -391,7 +419,6 @@ def _execute_trade(
         return paper_place_order(token_id, action, limit_price, qty)
     else:
         return live_place_order(token_id, action, limit_price, qty)
-
 
 def _ledger_snapshot() -> Dict[str, Any]:
     if STATE.mode == "paper":

@@ -223,6 +223,47 @@ class HistoricalDataLoader:
             logger.error("Resolved markets fetch failed", error=str(e))
             return []
 
+    def load_active_markets(
+        self,
+        limit: int = 100,
+        category: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Aktif (açık) market'leri çek — bunların CLOB history'si dolu."""
+        cache_key = f"backtest:active:{limit}:{category or 'all'}"
+        cached = self._get_cache(cache_key)
+        if cached:
+            return cached
+
+        try:
+            resp = self.session.get(
+                f"{GAMMA_BASE}/markets",
+                params={
+                    "limit": min(limit, 500),
+                    "closed": False,
+                    "active": True,
+                    "order": "volume24hrClob",
+                    "ascending": False,
+                },
+                timeout=15,
+            )
+            resp.raise_for_status()
+            raw = resp.json()
+            markets = raw if isinstance(raw, list) else raw.get("markets", raw.get("data", []))
+            if category:
+                cat_lower = category.lower()
+                markets = [
+                    m for m in markets
+                    if cat_lower in (m.get("category") or "").lower()
+                    or cat_lower in (m.get("question") or "").lower()
+                ]
+            result = markets[:limit]
+            self._set_cache(cache_key, result)
+            logger.info("Active markets loaded", count=len(result))
+            return result
+        except Exception as e:
+            logger.error("Active markets fetch failed", error=str(e))
+            return []
+
     # ── CLOB time-series ──
 
     def _fetch_market_history(
@@ -235,6 +276,7 @@ class HistoricalDataLoader:
                 params={
                     "market": token_id,
                     "fidelity": fidelity,
+                    "interval": "1w",
                 },
                 timeout=10,
             )

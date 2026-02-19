@@ -141,14 +141,12 @@ class ReplayEngine:
         Returns:
             BacktestResult
         """
-        logger.info("Backtest started", days_back=days_back, max_markets=max_markets)
         start_time = time.time()
 
-        # 1. Resolved markets yükle
+        # 1. AKTİF markets yükle (resolved'ların CLOB history'si boş)
         categories = self.config.categories
         cat_filter = None if "all" in categories else categories[0]
-        markets = self.loader.load_resolved_markets(
-            days_back=days_back,
+        markets = self.loader.load_active_markets(
             limit=max_markets,
             category=cat_filter,
         )
